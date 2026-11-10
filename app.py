@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 @app.after_request
 def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "https://9oh3c.cybozu.com"
+    response.headers["Access-Control-Allow-Origin"] = "https://yz1us.cybozu.com"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return response
@@ -22,7 +22,7 @@ KINTONE_API_TOKEN = os.environ.get("KINTONE_API_TOKEN")
 KINTONE_HIROSHIMA_API_TOKEN = os.environ.get("KINTONE_HIROSHIMA_API_TOKEN")
 CUSTOMER_KINTONE_API_TOKEN = os.environ.get("CUSTOMER_KINTONE_API_TOKEN")
 
-KINTONE_BASE = "https://9oh3c.cybozu.com"
+KINTONE_BASE = "hhttps://yz1us.cybozu.com"
 KINTONE_APP_ID = 6
 KINTONE_HIROSHIMA_APP_ID = 18
 CUSTOMER_KINTONE_APP_ID = 4
