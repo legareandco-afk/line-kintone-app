@@ -50,7 +50,11 @@
     .error-box { background:#fff2f2; border:1px solid #ffb7b7; color:#b00020; border-radius:14px; padding:16px; line-height:1.65; }
     .store-box { background:#f7f9ff; border:1px solid #cbd8ff; border-radius:12px; padding:12px; margin-top:12px; color:#24345f; }
     .return-box { background:#fffdf4; border:1px solid #f0df9b; border-radius:14px; padding:14px; margin-top:18px; }
-    @media (min-width:720px) { .method-grid { grid-template-columns:repeat(2,1fr); } .pickup-method-grid { grid-template-columns:repeat(2,1fr); } }
+    @media (min-width:720px) {
+      .method-grid { grid-template-columns:repeat(2,1fr); }
+      .pickup-method-grid { grid-template-columns:repeat(2,1fr); }
+      .checkbox-group { grid-template-columns:repeat(2,1fr); }
+    }
   </style>
 </head>
 <body>
@@ -109,18 +113,23 @@
         <h2 class="section-title">3. 故障内容</h2>
         <label>故障内容 <span class="required">必須</span></label>
         <div class="checkbox-group" id="issueGroup">
-          <label class="check-item"><input type="checkbox" name="issueCheck" value="空打ちする（釘が出ない）">空打ちする（釘が出ない）</label>
           <label class="check-item"><input type="checkbox" name="issueCheck" value="エアー漏れ">エアー漏れ</label>
-          <label class="check-item"><input type="checkbox" name="issueCheck" value="ピストンが戻らない">ピストンが戻らない</label>
-          <label class="check-item"><input type="checkbox" name="issueCheck" value="釘詰まりが頻繁に起きる">釘詰まりが頻繁に起きる</label>
-          <label class="check-item"><input type="checkbox" name="issueCheck" value="打ち込みが浅い">打ち込みが浅い</label>
-          <label class="check-item"><input type="checkbox" name="issueCheck" value="トリガーを引いても無反応">トリガーを引いても無反応</label>
-          <label class="check-item"><input type="checkbox" name="issueCheck" value="オーバーホール">オーバーホール</label>
+          <label class="check-item"><input type="checkbox" name="issueCheck" value="打ち込み・作動不良">打ち込み・作動不良</label>
+          <label class="check-item"><input type="checkbox" name="issueCheck" value="ピストン・芯棒不良">ピストン・芯棒不良</label>
+          <label class="check-item"><input type="checkbox" name="issueCheck" value="リターン破損">リターン破損</label>
+          <label class="check-item"><input type="checkbox" name="issueCheck" value="先端・ノーズ部破損・脱落">先端・ノーズ部破損・脱落</label>
+          <label class="check-item"><input type="checkbox" name="issueCheck" value="マガジン部破損・作動不良">マガジン部破損・作動不良</label>
+          <label class="check-item"><input type="checkbox" name="issueCheck" value="釘詰まり・噛み込み">釘詰まり・噛み込み</label>
+          <label class="check-item"><input type="checkbox" name="issueCheck" value="釘送り不良">釘送り不良</label>
+          <label class="check-item"><input type="checkbox" name="issueCheck" value="ビット関連不良">ビット関連不良</label>
+          <label class="check-item"><input type="checkbox" name="issueCheck" value="調整ダイヤル・深さ調整不良">調整ダイヤル・深さ調整不良</label>
+          <label class="check-item"><input type="checkbox" name="issueCheck" value="外装・部品破損・欠損">外装・部品破損・欠損</label>
+          <label class="check-item"><input type="checkbox" name="issueCheck" value="点検・オーバーホール">点検・オーバーホール</label>
           <label class="check-item"><input type="checkbox" id="issueOtherCheck" name="issueCheck" value="その他">その他</label>
         </div>
         <div id="issueOtherBox" class="hidden">
-          <label>その他の故障内容</label>
-          <input type="text" id="issueOther" name="issueOther" placeholder="故障内容を入力してください">
+          <label>その他の故障内容 <span class="required">必須</span></label>
+          <input type="text" id="issueother" name="issueother" placeholder="その他の症状を入力してください">
         </div>
       </div>
 
@@ -304,7 +313,7 @@
 
     document.getElementById("issueOtherCheck").addEventListener("change", function () {
       const box = document.getElementById("issueOtherBox");
-      const input = document.getElementById("issueOther");
+      const input = document.getElementById("issueother");
       if (this.checked) {
         box.classList.remove("hidden");
         input.required = true;
@@ -522,6 +531,10 @@
     function validateForm() {
       const issues = getSelectedIssues();
       if (issues.length === 0) { alert("故障内容を1つ以上選択してください。"); return false; }
+      if (issues.includes("その他")) {
+        const issueotherVal = document.getElementById("issueother").value.trim();
+        if (!issueotherVal) { alert("「その他」を選択した場合は、その他の故障内容を入力してください。"); return false; }
+      }
       const mainMethod = document.getElementById("mainMethod").value;
       const pickupMethod = document.getElementById("pickupMethod").value;
       const uketorihouhou = document.getElementById("uketorihouhou").value;
@@ -564,6 +577,8 @@
         let maker = document.getElementById("maker").value;
         const makerother = document.getElementById("makerOther").value.trim();
         if (maker === "その他" && makerother) maker = makerother;
+        const issueother = document.getElementById("issueother").value.trim();
+
         const data = {
           store: store,
           lineuserid: userId,
@@ -573,8 +588,8 @@
           makerother: makerother,
           model: document.getElementById("model").value.trim(),
           serial: document.getElementById("serial").value.trim(),
-          issue: selectedIssues.join("、"),
-          issueother: document.getElementById("issueOther").value.trim(),
+          issue: selectedIssues,
+          issueother: issueother,
           uketorihouhou: method,
           shukajusho: document.getElementById("shukajusho").value.trim(),
           shukakiboubi: document.getElementById("shukakiboubi").value,
