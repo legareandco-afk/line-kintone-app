@@ -268,6 +268,27 @@
     const storeInfoHtml = `<div class="store-box"><strong>国本刃物 上中野店</strong><br>〒700-0972<br>岡山県岡山市北区上中野2丁目27-12<br>電話番号：086-230-6551</div>`;
     const hiroshimaStoreInfoHtml = `<div class="store-box"><strong>広島本店</strong><br>店舗の所在地・電話番号はLINEの店舗案内をご確認ください。</div>`;
 
+    async function autofillCustomerProfile(currentUserId) {
+      if (!currentUserId) return;
+      try {
+        const res = await fetch("/api/customer-profile?lineuserid=" + encodeURIComponent(currentUserId));
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.ok || !data.found) return;
+
+        const nameInput = document.getElementById("name");
+        const phoneInput = document.getElementById("phone");
+        if (nameInput && !nameInput.value.trim() && data.name) {
+          nameInput.value = data.name;
+        }
+        if (phoneInput && !phoneInput.value.trim() && data.phone) {
+          phoneInput.value = data.phone;
+        }
+      } catch (err) {
+        console.warn("顧客情報の自動入力スキップ:", err);
+      }
+    }
+
     window.onload = async function () {
       const submitBtn = document.getElementById("submitBtn");
       const liffStatus = document.getElementById("liffStatus");
@@ -280,6 +301,7 @@
         const profile = await liff.getProfile();
         userId = profile.userId;
         if (userId) {
+          await autofillCustomerProfile(userId);
           liffStatus.textContent = "LINE連携完了";
           liffStatus.style.color = "green";
           submitBtn.disabled = false;
@@ -617,6 +639,7 @@
         }
         msg.innerHTML = successText;
         document.getElementById("repairForm").reset();
+        await autofillCustomerProfile(userId);
         document.querySelectorAll(".method-card").forEach(function (c) { c.classList.remove("active"); });
         document.getElementById("pickupMethodBox").classList.add("hidden");
         document.getElementById("pickupInfoCard").classList.add("hidden");
