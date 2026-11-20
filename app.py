@@ -1599,16 +1599,19 @@ def build_demo_rental_record(data, config, master_record):
         "",
     )
     line_user_id = str(data.get("lineuserid", "")).strip()
+    customer_name = str(data.get("name", "")).strip()
+    phone = str(data.get("phone", "")).strip()
+    company = str(data.get("company", "")).strip()
 
     record = {
         config["rental_demo_field"]: {
             "value": demo_no,
             "lookup": True,
         },
-        "ルックアップ_0": {
-            "value": line_user_id,
-            "lookup": True,
-        },
+        "ルックアップ_0": make_field(line_user_id),
+        "customer_name": make_field(customer_name),
+        "phone": make_field(phone),
+        "company": make_field(company),
         "rental_scheduled_date": make_field(
             data.get("rentalScheduledDate", "")
         ),
