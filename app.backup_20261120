@@ -169,6 +169,22 @@ def getvalue(record, field_code, default=""):
         return default
 
 
+def normalize_issue_list(raw_issue):
+    if isinstance(raw_issue, list):
+        return [str(v).strip() for v in raw_issue if str(v).strip()]
+    if isinstance(raw_issue, str):
+        parts = [p.strip() for p in raw_issue.replace("、", ",").split(",")]
+        return [p for p in parts if p]
+    return []
+
+
+def format_issue_text(record):
+    val = getvalue(record, "issue", "")
+    if isinstance(val, list):
+        return "、".join([str(v).strip() for v in val if str(v).strip()])
+    return str(val or "").strip()
+
+
 def make_field(value):
     return {"value": value if value is not None else ""}
 
@@ -641,6 +657,7 @@ def build_notify_message(record):
 def build_status_text(record):
     rid = record_id_text(record)
     status = getvalue(record, "ドロップダウン", "未設定")
+    issue_text = format_issue_text(record)
     text = f"""【修理進捗状況のご案内】
 
 受付番号：{rid}
@@ -655,7 +672,7 @@ def build_status_text(record):
 機番：{getvalue(record, 'serial', '') or '未入力'}
 
 ■ 故障内容
-{getvalue(record, 'issue', '') or '未入力'}
+{issue_text or '未入力'}
 
 ■ 受け渡し方法
 {getvalue(record, 'uketorihouhou', '') or '未入力'}
@@ -718,6 +735,7 @@ def build_pickup_requested_notify_card(record):
 
 def build_estimate_flex_message(record, app_id=KINTONE_APP_ID):
     rid = record_id_text(record)
+    issue_text = format_issue_text(record)
     body = [
         name_line(record),
         tc("修理品のお見積りが完了しました。", color="#666666"),
@@ -727,7 +745,7 @@ def build_estimate_flex_message(record, app_id=KINTONE_APP_ID):
         tc(f"型番：{getvalue(record, 'model', '') or '未入力'}"),
         tc(f"機番：{getvalue(record, 'serial', '') or '未入力'}"),
         tc("故障内容", weight="bold", color="#06C755", margin="md"),
-        tc(shorten_text(getvalue(record, 'issue', ''), 70)),
+        tc(shorten_text(issue_text, 70)),
         info_box("お見積り金額", format_yen(getvalue(record, 'mitsumorikingaku', '')), "#06C755", "#F3FFF7"),
         tc("お見積り内容", weight="bold", color="#06C755", margin="md"),
         tc(shorten_text(getvalue(record, 'mitsumorinaiyo', ''), 80))
@@ -939,6 +957,86 @@ def form():
     return render_template("form.html")
 
 
+@app.route("/api/customer-profile", methods=["GET"])
+def api_customer_profile():
+    try:
+        line_user_id = str(request.args.get("lineuserid", "")).strip()
+        if not line_user_id:
+            return (
+                json.dumps(
+                    {"ok": False, "found": False, "message": "lineuseridが必要です。"},
+                    ensure_ascii=False,
+                ),
+                400,
+                {"Content-Type": "application/json; charset=utf-8"},
+            )
+
+        if not customer_api_enabled():
+            return (
+                json.dumps(
+                    {"ok": True, "found": False, "name": "", "phone": ""},
+                    ensure_ascii=False,
+                ),
+                200,
+                {"Content-Type": "application/json; charset=utf-8"},
+            )
+
+        safe_user_id = escape_kintone_query_value(line_user_id)
+        query = f'lineid = "{safe_user_id}" order by $id desc limit 1'
+        res = requests.get(
+            KINTONE_RECORDS_URL,
+            headers={"X-Cybozu-API-Token": CUSTOMER_KINTONE_API_TOKEN},
+            params={"app": CUSTOMER_KINTONE_APP_ID, "query": query},
+            timeout=20,
+        )
+        print("顧客プロフィール取得ステータス:", res.status_code, res.text)
+        if not res.ok:
+            return (
+                json.dumps(
+                    {"ok": False, "found": False, "message": "顧客情報の取得に失敗しました。"},
+                    ensure_ascii=False,
+                ),
+                502,
+                {"Content-Type": "application/json; charset=utf-8"},
+            )
+
+        records = res.json().get("records", [])
+        if not records:
+            return (
+                json.dumps(
+                    {"ok": True, "found": False, "name": "", "phone": ""},
+                    ensure_ascii=False,
+                ),
+                200,
+                {"Content-Type": "application/json; charset=utf-8"},
+            )
+
+        record = records[0]
+        return (
+            json.dumps(
+                {
+                    "ok": True,
+                    "found": True,
+                    "name": getvalue(record, "customer_name", ""),
+                    "phone": getvalue(record, "phone", ""),
+                },
+                ensure_ascii=False,
+            ),
+            200,
+            {"Content-Type": "application/json; charset=utf-8"},
+        )
+    except Exception as error:
+        print("顧客プロフィール取得エラー:", repr(error))
+        return (
+            json.dumps(
+                {"ok": False, "found": False, "message": "顧客情報の取得中にエラーが発生しました。"},
+                ensure_ascii=False,
+            ),
+            500,
+            {"Content-Type": "application/json; charset=utf-8"},
+        )
+
+
 @app.route("/submit", methods=["POST"])
 def submit():
     data = request.get_json(force=True)
@@ -950,6 +1048,8 @@ def submit():
     lineuserid = data.get("lineuserid", "")
     name = data.get("name", "")
     phone = data.get("phone", "")
+    issues = normalize_issue_list(data.get("issue"))
+    issueother = str(data.get("issueother") or data.get("issue_other") or "").strip()
     raw_uketorihouhou = data.get("uketorihouhou", "")
     uketorihouhou = normalize_uketorihouhou_for_kintone(raw_uketorihouhou)
     notify_url = f"{PUBLIC_BASE_URL}/notify?app={app_id}&user={lineuserid}"
@@ -962,8 +1062,8 @@ def submit():
         "makerother": make_field(data.get("makerother", "")),
         "model": make_field(data.get("model", "")),
         "serial": make_field(data.get("serial", "")),
-        "issue": make_field(data.get("issue", "")),
-        "issueother": make_field(data.get("issueother", "")),
+        "issue": make_field(issues),
+        "issueother": make_field(issueother),
         "uketorihouhou": make_field(uketorihouhou),
         "shukajusho": make_field(data.get("shukajusho", "")),
         "shukakiboubi": make_field(data.get("shukakiboubi", "")),
@@ -1622,10 +1722,6 @@ def build_demo_rental_record(data, config, master_record):
         "remarks": make_field(data.get("remarks", "")),
     }
 
-    # 岡山版では付属品がルックアップのコピー対象外です。
-    # 広島版では店舗がルックアップのコピー対象外です。
-    # コピー対象の項目を直接送るとKintone側で競合するため、
-    # コピー対象外の項目だけを明示的に登録します。
     if config["rental_app_id"] == OKAYAMA_DEMO_RENTAL_APP_ID:
         record["文字列__1行__1"] = make_field(accessory_status)
     else:
