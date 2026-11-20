@@ -957,6 +957,86 @@ def form():
     return render_template("form.html")
 
 
+@app.route("/api/customer-profile", methods=["GET"])
+def api_customer_profile():
+    try:
+        line_user_id = str(request.args.get("lineuserid", "")).strip()
+        if not line_user_id:
+            return (
+                json.dumps(
+                    {"ok": False, "found": False, "message": "lineuseridが必要です。"},
+                    ensure_ascii=False,
+                ),
+                400,
+                {"Content-Type": "application/json; charset=utf-8"},
+            )
+
+        if not customer_api_enabled():
+            return (
+                json.dumps(
+                    {"ok": True, "found": False, "name": "", "phone": ""},
+                    ensure_ascii=False,
+                ),
+                200,
+                {"Content-Type": "application/json; charset=utf-8"},
+            )
+
+        safe_user_id = escape_kintone_query_value(line_user_id)
+        query = f'lineid = "{safe_user_id}" order by $id desc limit 1'
+        res = requests.get(
+            KINTONE_RECORDS_URL,
+            headers={"X-Cybozu-API-Token": CUSTOMER_KINTONE_API_TOKEN},
+            params={"app": CUSTOMER_KINTONE_APP_ID, "query": query},
+            timeout=20,
+        )
+        print("顧客プロフィール取得ステータス:", res.status_code, res.text)
+        if not res.ok:
+            return (
+                json.dumps(
+                    {"ok": False, "found": False, "message": "顧客情報の取得に失敗しました。"},
+                    ensure_ascii=False,
+                ),
+                502,
+                {"Content-Type": "application/json; charset=utf-8"},
+            )
+
+        records = res.json().get("records", [])
+        if not records:
+            return (
+                json.dumps(
+                    {"ok": True, "found": False, "name": "", "phone": ""},
+                    ensure_ascii=False,
+                ),
+                200,
+                {"Content-Type": "application/json; charset=utf-8"},
+            )
+
+        record = records[0]
+        return (
+            json.dumps(
+                {
+                    "ok": True,
+                    "found": True,
+                    "name": getvalue(record, "customer_name", ""),
+                    "phone": getvalue(record, "phone", ""),
+                },
+                ensure_ascii=False,
+            ),
+            200,
+            {"Content-Type": "application/json; charset=utf-8"},
+        )
+    except Exception as error:
+        print("顧客プロフィール取得エラー:", repr(error))
+        return (
+            json.dumps(
+                {"ok": False, "found": False, "message": "顧客情報の取得中にエラーが発生しました。"},
+                ensure_ascii=False,
+            ),
+            500,
+            {"Content-Type": "application/json; charset=utf-8"},
+        )
+
+
 @app.route("/submit", methods=["POST"])
 def submit():
     data = request.get_json(force=True)
