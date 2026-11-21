@@ -17,7 +17,23 @@ def add_cors_headers(response):
     return response
 
 
-LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_TOKEN")
+# =========================================================
+# LINE 3プロバイダー（岡山・広島・EC）トークン設定
+# =========================================================
+DEFAULT_LINE_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_TOKEN")
+LINE_OKAYAMA_TOKEN = os.environ.get("LINE_OKAYAMA_CHANNEL_ACCESS_TOKEN") or DEFAULT_LINE_TOKEN
+LINE_HIROSHIMA_TOKEN = os.environ.get("LINE_HIROSHIMA_CHANNEL_ACCESS_TOKEN") or DEFAULT_LINE_TOKEN
+LINE_EC_TOKEN = os.environ.get("LINE_EC_CHANNEL_ACCESS_TOKEN") or DEFAULT_LINE_TOKEN
+
+LINE_STORE_TOKENS = {
+    "okayama": LINE_OKAYAMA_TOKEN,
+    "hiroshima": LINE_HIROSHIMA_TOKEN,
+    "ec": LINE_EC_TOKEN,
+}
+
+# =========================================================
+# Kintone アプリID・APIトークン設定
+# =========================================================
 KINTONE_API_TOKEN = os.environ.get("KINTONE_API_TOKEN")
 KINTONE_HIROSHIMA_API_TOKEN = os.environ.get("KINTONE_HIROSHIMA_API_TOKEN")
 KINTONE_EC_API_TOKEN = os.environ.get("KINTONE_EC_API_TOKEN")
@@ -28,7 +44,6 @@ KINTONE_APP_ID = 37
 KINTONE_HIROSHIMA_APP_ID = 46
 KINTONE_EC_APP_ID = 49
 CUSTOMER_KINTONE_APP_ID = 38
-
 
 # =========================================================
 # デモ機貸出設定（共通マスター:36 / 岡山:35 / 広島:47 / EC:50）
@@ -134,6 +149,41 @@ def today_jst_for_kintone_date():
     return datetime.now(JST).strftime("%Y-%m-%d")
 
 
+def normalize_store_key(store):
+    raw = str(store or "").strip().lower()
+    if raw in ["hiroshima", "広島", "広島本店", "18", "46", "47"]:
+        return "hiroshima"
+    if raw in ["ec", "通販", "ネット", "クニプロネットショップ", "49", "50"]:
+        return "ec"
+    if raw in ["okayama", "岡山", "岡山上中野店", "37", "35"]:
+        return "okayama"
+    return ""
+
+
+def store_key_from_app_id(app_id):
+    try:
+        normalized = int(app_id)
+    except (TypeError, ValueError):
+        return "okayama"
+    if normalized in [KINTONE_HIROSHIMA_APP_ID, HIROSHIMA_DEMO_RENTAL_APP_ID]:
+        return "hiroshima"
+    if normalized in [KINTONE_EC_APP_ID, EC_DEMO_RENTAL_APP_ID]:
+        return "ec"
+    return "okayama"
+
+
+def get_line_token_for_store(store_key):
+    key = normalize_store_key(store_key) or "okayama"
+    token = LINE_STORE_TOKENS.get(key) or DEFAULT_LINE_TOKEN
+    if not token:
+        raise RuntimeError(f"店舗({key})のLINEチャネルアクセストークンが未設定です。")
+    return token
+
+
+def get_line_token_for_app_id(app_id):
+    return get_line_token_for_store(store_key_from_app_id(app_id))
+
+
 def normalize_app_id(app_id):
     try:
         normalized_app_id = int(app_id)
@@ -168,15 +218,26 @@ def store_label_from_app_id(app_id):
 
 
 def app_id_from_store(store):
-    normalized_store = str(store or "").strip().lower()
-
-    if normalized_store in ["hiroshima", "広島", "広島本店", "18", "46"]:
+    key = normalize_store_key(store)
+    if key == "hiroshima":
         return KINTONE_HIROSHIMA_APP_ID
-
-    if normalized_store in ["ec", "通販", "ネット", "クニプロネットショップ", "49"]:
+    if key == "ec":
         return KINTONE_EC_APP_ID
-
     return KINTONE_APP_ID
+
+
+def repair_app_ids_for_store(store_key=""):
+    key = normalize_store_key(store_key)
+    if key:
+        return [app_id_from_store(key)]
+    return list(REPAIR_APP_IDS)
+
+
+def demo_configs_for_store(store_key=""):
+    key = normalize_store_key(store_key)
+    if key and key in DEMO_STORE_CONFIG:
+        return [DEMO_STORE_CONFIG[key]]
+    return list(DEMO_STORE_CONFIG.values())
 
 
 def kintone_headers(app_id=KINTONE_APP_ID):
@@ -190,8 +251,9 @@ def customer_kintone_headers():
     return {"X-Cybozu-API-Token": CUSTOMER_KINTONE_API_TOKEN, "Content-Type": "application/json"}
 
 
-def line_headers():
-    return {"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}", "Content-Type": "application/json"}
+def line_headers(store_key="okayama"):
+    token = get_line_token_for_store(store_key)
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
 def getvalue(record, field_code, default=""):
@@ -281,27 +343,39 @@ def post_json(url, payload, headers):
 
 
 # =========================
-# LINE送信
+# LINE送信（店舗別トークン対応）
 # =========================
 
-def send_line_reply(reply_token, text, quick_reply_items=None):
+def send_line_reply(reply_token, text, quick_reply_items=None, store_key="okayama"):
     message = {"type": "text", "text": text}
     if quick_reply_items:
         message["quickReply"] = {"items": quick_reply_items}
-    res = post_json(LINE_REPLY_URL, {"replyToken": reply_token, "messages": [message]}, line_headers())
-    print("LINE返信:", res.text)
+    res = post_json(
+        LINE_REPLY_URL,
+        {"replyToken": reply_token, "messages": [message]},
+        line_headers(store_key)
+    )
+    print(f"LINE返信({store_key}):", res.text)
     return res
 
 
-def send_line_reply_messages(reply_token, messages):
-    res = post_json(LINE_REPLY_URL, {"replyToken": reply_token, "messages": messages}, line_headers())
-    print("LINE複数返信:", res.text)
+def send_line_reply_messages(reply_token, messages, store_key="okayama"):
+    res = post_json(
+        LINE_REPLY_URL,
+        {"replyToken": reply_token, "messages": messages},
+        line_headers(store_key)
+    )
+    print(f"LINE複数返信({store_key}):", res.text)
     return res
 
 
-def send_line_push_messages(user_id, messages):
-    res = post_json(LINE_PUSH_URL, {"to": user_id, "messages": messages}, line_headers())
-    print("LINE複数送信:", res.text)
+def send_line_push_messages(user_id, messages, store_key="okayama"):
+    res = post_json(
+        LINE_PUSH_URL,
+        {"to": user_id, "messages": messages},
+        line_headers(store_key)
+    )
+    print(f"LINE複数送信({store_key}):", res.text)
     return res
 
 
@@ -491,8 +565,8 @@ def upsert_customer_record(lineid, name, phone):
 # =========================
 # 更新処理
 # =========================
-def clear_location_targets(line_user_id, except_app_id=None, except_record_id=None):
-    for target_app_id in REPAIR_APP_IDS:
+def clear_location_targets(line_user_id, except_app_id=None, except_record_id=None, store_key=""):
+    for target_app_id in repair_app_ids_for_store(store_key):
         if not SUPPORTED_KINTONE_APPS.get(target_app_id):
             continue
         records = get_records_by_lineid(
@@ -522,7 +596,7 @@ def clear_location_targets(line_user_id, except_app_id=None, except_record_id=No
                 target_app_id
             )
 
-    for config in DEMO_STORE_CONFIG.values():
+    for config in demo_configs_for_store(store_key):
         if not config.get("rental_token"):
             continue
         records = get_demo_records_by_lineid(config, line_user_id, limit=100)
@@ -547,10 +621,12 @@ def clear_location_targets(line_user_id, except_app_id=None, except_record_id=No
 
 def set_location_target(line_user_id, app_id, record_id, purpose):
     normalized_app_id = normalize_app_id(app_id)
+    store_key = store_key_from_app_id(normalized_app_id)
     clear_location_targets(
         line_user_id,
         except_app_id=normalized_app_id,
-        except_record_id=record_id
+        except_record_id=record_id,
+        store_key=store_key
     )
     return update_kintone_record(
         record_id,
@@ -559,10 +635,10 @@ def set_location_target(line_user_id, app_id, record_id, purpose):
     )
 
 
-def find_location_target(line_user_id):
+def find_location_target(line_user_id, store_key=""):
     targets = []
 
-    for config in DEMO_STORE_CONFIG.values():
+    for config in demo_configs_for_store(store_key):
         if not config.get("rental_token"):
             continue
         records = get_demo_records_by_lineid(config, line_user_id, limit=100)
@@ -577,7 +653,7 @@ def find_location_target(line_user_id):
                     "purpose": purpose,
                 })
 
-    for target_app_id in REPAIR_APP_IDS:
+    for target_app_id in repair_app_ids_for_store(store_key):
         if not SUPPORTED_KINTONE_APPS.get(target_app_id):
             continue
         records = get_records_by_lineid(
@@ -1197,6 +1273,7 @@ def submit():
     app_id = normalize_app_id(
         requested_app_id or app_id_from_store(requested_store)
     )
+    store_key = store_key_from_app_id(app_id)
     lineuserid = data.get("lineuserid", "")
     name = data.get("name", "")
     phone = data.get("phone", "")
@@ -1241,7 +1318,8 @@ def submit():
         clear_location_targets(
             lineuserid,
             except_app_id=app_id,
-            except_record_id=rid
+            except_record_id=rid,
+            store_key=store_key
         )
     upsert_customer_record(lineuserid, name, phone)
 
@@ -1250,9 +1328,9 @@ def submit():
 
     if raw_uketorihouhou == "集荷依頼・LINEで位置情報を送る":
         pickup_card = build_pickup_location_request_flex_message(rid, name)
-        send_line_push_messages(lineuserid, [receipt_card, pickup_card])
+        send_line_push_messages(lineuserid, [receipt_card, pickup_card], store_key=store_key)
     else:
-        send_line_push_messages(lineuserid, [receipt_card])
+        send_line_push_messages(lineuserid, [receipt_card], store_key=store_key)
 
     return "OK", 200
 
@@ -1264,6 +1342,7 @@ def notify():
     user_id = request.args.get("user", "")
     record_id = request.args.get("recordid", "") or request.args.get("id", "")
     app_id = normalize_app_id(request.args.get("app", KINTONE_APP_ID))
+    store_key = store_key_from_app_id(app_id)
     if not user_id and not record_id:
         return "user または recordid が必要です", 400
     if record_id:
@@ -1288,7 +1367,7 @@ def notify():
         print("重複通知スキップ:", app_id, status)
         return "同じ内容なので送信できません。何か内容を変えたら送れます。", 200
     flex_message = build_notify_flex_message(record, app_id)
-    line_res = send_line_push_messages(user_id, [flex_message])
+    line_res = send_line_push_messages(user_id, [flex_message], store_key=store_key)
     if not line_res.ok:
         return line_res.text, 500
     update_notify_history(record_id, message, app_id)
@@ -1298,7 +1377,8 @@ def notify():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     body = request.get_json(force=True)
-    print("Webhook受信:", body)
+    store_key = normalize_store_key(request.args.get("store", ""))
+    print(f"Webhook受信({store_key or 'auto'}):", body)
 
     for event in body.get("events", []):
         event_type = event.get("type")
@@ -1310,44 +1390,59 @@ def webhook():
             if message.get("type") == "text":
                 text = message.get("text", "").strip()
                 if text == "修理問い合わせ":
-                    handle_repair_inquiry(user_id, reply_token)
+                    handle_repair_inquiry(user_id, reply_token, store_key=store_key)
                 elif text.isdigit():
-                    handle_record_number_inquiry(user_id, text, reply_token)
+                    handle_record_number_inquiry(user_id, text, reply_token, store_key=store_key)
                 else:
-                    send_line_reply(reply_token, "メッセージありがとうございます。\n修理状況を確認する場合は「修理問い合わせ」と送信してください。")
+                    send_line_reply(
+                        reply_token,
+                        "メッセージありがとうございます。\n修理状況を確認する場合は「修理問い合わせ」と送信してください。",
+                        store_key=store_key or "okayama"
+                    )
             elif message.get("type") == "location":
-                handle_location_message(user_id, reply_token, message)
+                handle_location_message(user_id, reply_token, message, store_key=store_key)
 
         elif event_type == "postback":
             data = html.unescape(event.get("postback", {}).get("data", ""))
             print("Postback受信:", data)
-            handle_postback(user_id, reply_token, data)
+            handle_postback(user_id, reply_token, data, store_key=store_key)
 
     return "OK", 200
 
 
 # =========================
-# Webhook handlers
+# Webhook handlers（拠点別・プロバイダー別完全分離対応）
 # =========================
 
-def handle_repair_inquiry(user_id, reply_token):
+def handle_repair_inquiry(user_id, reply_token, store_key=""):
+    target_apps = repair_app_ids_for_store(store_key)
+    reply_store = store_key or "okayama"
+
     app_records = []
-    for app_id in REPAIR_APP_IDS:
+    for app_id in target_apps:
         if not SUPPORTED_KINTONE_APPS.get(app_id):
             continue
         records = get_records_by_lineid(user_id, limit=10, app_id=app_id)
         for record in records:
             app_records.append({"app_id": app_id, "record": record})
+
     if not app_records:
-        send_line_reply(reply_token, "現在、このLINEアカウントに紐づく修理受付は見つかりませんでした。")
+        send_line_reply(
+            reply_token,
+            "現在、このLINEアカウントに紐づく修理受付は見つかりませんでした。",
+            store_key=reply_store
+        )
         return
+
     if len(app_records) == 1:
         item = app_records[0]
         send_line_reply_messages(
             reply_token,
-            [build_inquiry_flex_message(item["record"], item["app_id"])]
+            [build_inquiry_flex_message(item["record"], item["app_id"])],
+            store_key=store_key_from_app_id(item["app_id"])
         )
         return
+
     text = "複数の修理受付があります。\n確認したい受付を選んでください。"
     quick_items = []
     for item in app_records[:10]:
@@ -1355,7 +1450,8 @@ def handle_repair_inquiry(user_id, reply_token):
         record = item["record"]
         rid = record_id_text(record)
         store_label = store_label_from_app_id(app_id)
-        label = f"{store_label} {rid} {getvalue(record, 'maker', '')} {getvalue(record, 'model', '')}".strip() or f"{store_label} 受付番号 {rid}"
+        prefix = f"{store_label} " if not store_key else ""
+        label = f"{prefix}{rid} {getvalue(record, 'maker', '')} {getvalue(record, 'model', '')}".strip() or f"{prefix}受付番号 {rid}"
         quick_items.append(
             quick_reply_postback(
                 label[:20],
@@ -1363,30 +1459,38 @@ def handle_repair_inquiry(user_id, reply_token):
                 label[:20]
             )
         )
-    send_line_reply(reply_token, text, quick_items)
+    send_line_reply(reply_token, text, quick_items, store_key=reply_store)
 
 
-def handle_record_number_inquiry(user_id, record_number, reply_token):
+def handle_record_number_inquiry(user_id, record_number, reply_token, store_key=""):
+    target_apps = repair_app_ids_for_store(store_key)
+    reply_store = store_key or "okayama"
+
     matches = []
-    for app_id in REPAIR_APP_IDS:
+    for app_id in target_apps:
         if not SUPPORTED_KINTONE_APPS.get(app_id):
             continue
         record = get_kintone_record(record_number, app_id)
         if record and getvalue(record, "lineid", "") == user_id:
             matches.append({"app_id": app_id, "record": record})
+
     if not matches:
         send_line_reply(
             reply_token,
-            "指定された受付番号の修理受付が見つからないか、このLINEアカウントに紐づいていません。"
+            "指定された受付番号の修理受付が見つからないか、このLINEアカウントに紐づいていません。",
+            store_key=reply_store
         )
         return
+
     if len(matches) == 1:
         item = matches[0]
         send_line_reply_messages(
             reply_token,
-            [build_inquiry_flex_message(item["record"], item["app_id"])]
+            [build_inquiry_flex_message(item["record"], item["app_id"])],
+            store_key=store_key_from_app_id(item["app_id"])
         )
         return
+
     quick_items = []
     for item in matches:
         app_id = item["app_id"]
@@ -1401,21 +1505,25 @@ def handle_record_number_inquiry(user_id, record_number, reply_token):
     send_line_reply(
         reply_token,
         "同じ受付番号が複数店舗にあります。\n確認する店舗を選んでください。",
-        quick_items
+        quick_items,
+        store_key=reply_store
     )
 
 
-def handle_location_message(user_id, reply_token, message):
+def handle_location_message(user_id, reply_token, message, store_key=""):
+    reply_store = store_key or "okayama"
     address = message.get("address", "")
     title = message.get("title", "")
     latitude = message.get("latitude", "")
     longitude = message.get("longitude", "")
     location_text = address or title or "位置情報"
-    target = find_location_target(user_id)
+    target = find_location_target(user_id, store_key=store_key)
+
     if not target:
         send_line_reply(
             reply_token,
-            "位置情報を受信しましたが、登録先の受付を確認できませんでした。受付後に届いた位置情報ボタンから、もう一度お試しください。"
+            "位置情報を受信しましたが、登録先の受付を確認できませんでした。受付後に届いた位置情報ボタンから、もう一度お試しください。",
+            store_key=reply_store
         )
         return
 
@@ -1423,6 +1531,7 @@ def handle_location_message(user_id, reply_token, message):
     record = target["record"]
     purpose = target["purpose"]
     rid = record_id_text(record)
+    target_store = store_key_from_app_id(target["app_id"])
 
     if kind == "demo" and purpose == "配達":
         config = target["config"]
@@ -1438,6 +1547,7 @@ def handle_location_message(user_id, reply_token, message):
             "デモ機のお届け先住所を登録しました。\nご協力ありがとうございます。"
             if res.ok
             else "お届け先場所の登録に失敗しました。お手数ですが店舗までご連絡ください。",
+            store_key=target_store
         )
         return
 
@@ -1454,18 +1564,28 @@ def handle_location_message(user_id, reply_token, message):
         )
         if res.ok:
             if sameaddress == "はい" or henkyakuhouhou == "集荷場所と同じ":
-                send_line_reply(reply_token, "集荷住所を登録しました。\n返却住所は集荷住所と同じとして登録しています。")
+                send_line_reply(
+                    reply_token,
+                    "集荷住所を登録しました。\n返却住所は集荷住所と同じとして登録しています。",
+                    store_key=target_store
+                )
             elif henkyakuhouhou == "LINEで位置情報を送る":
                 updated_record = get_kintone_record(rid, app_id)
                 send_line_reply_messages(
                     reply_token,
-                    [build_return_location_request_flex_message(updated_record)]
+                    [build_return_location_request_flex_message(updated_record)],
+                    store_key=target_store
                 )
             else:
-                send_line_reply(reply_token, "集荷住所を登録しました。")
+                send_line_reply(reply_token, "集荷住所を登録しました。", store_key=target_store)
         else:
-            send_line_reply(reply_token, "位置情報の登録に失敗しました。お手数ですが店舗までご連絡ください。")
+            send_line_reply(
+                reply_token,
+                "位置情報の登録に失敗しました。お手数ですが店舗までご連絡ください。",
+                store_key=target_store
+            )
         return
+
     if purpose == "返却":
         res = update_location_return(
             rid,
@@ -1476,37 +1596,51 @@ def handle_location_message(user_id, reply_token, message):
         )
         send_line_reply(
             reply_token,
-            "返却住所を登録しました。\nご協力ありがとうございます。" if res.ok else "返却場所の登録に失敗しました。お手数ですが店舗までご連絡ください。"
+            "返却住所を登録しました。\nご協力ありがとうございます。" if res.ok else "返却場所の登録に失敗しました。お手数ですが店舗までご連絡ください。",
+            store_key=target_store
         )
         return
+
     send_line_reply(
         reply_token,
-        "位置情報の登録先を確認できませんでした。お手数ですが、もう一度お試しください。"
+        "位置情報の登録先を確認できませんでした。お手数ですが、もう一度お試しください。",
+        store_key=target_store
     )
 
 
-def handle_postback(user_id, reply_token, data):
+def handle_postback(user_id, reply_token, data, store_key=""):
     parsed = parse_qs(data)
     action = parsed.get("action", [""])[0]
     record_id = parsed.get("recordid", [""])[0]
-    app_id = normalize_app_id(parsed.get("app", [KINTONE_APP_ID])[0])
+    default_app = app_id_from_store(store_key) if store_key else KINTONE_APP_ID
+    app_id = normalize_app_id(parsed.get("app", [default_app])[0])
+    target_store = store_key_from_app_id(app_id)
 
     if not action or not record_id:
-        send_line_reply(reply_token, "操作内容を確認できませんでした。")
+        send_line_reply(reply_token, "操作内容を確認できませんでした。", store_key=target_store)
         return
 
     record_before = get_kintone_record(record_id, app_id)
     if not record_before:
-        send_line_reply(reply_token, "対象の修理受付が見つかりませんでした。")
+        send_line_reply(reply_token, "対象の修理受付が見つかりませんでした。", store_key=target_store)
         return
     if getvalue(record_before, "lineid", "") != user_id:
-        send_line_reply(reply_token, "この修理受付は、このLINEアカウントに紐づいていないため操作できません。")
+        send_line_reply(
+            reply_token,
+            "この修理受付は、このLINEアカウントに紐づいていないため操作できません。",
+            store_key=target_store
+        )
         return
+
     if action in ["select_pickup_location", "select_return_location"]:
         purpose = "集荷" if action == "select_pickup_location" else "返却"
         res = set_location_target(user_id, app_id, record_id, purpose)
         if not res.ok:
-            send_line_reply(reply_token, "位置情報の登録先設定に失敗しました。お手数ですが店舗までご連絡ください。")
+            send_line_reply(
+                reply_token,
+                "位置情報の登録先設定に失敗しました。お手数ですが店舗までご連絡ください。",
+                store_key=target_store
+            )
             return
         if purpose == "集荷":
             message = build_pickup_location_request_flex_message(
@@ -1515,7 +1649,7 @@ def handle_postback(user_id, reply_token, data):
             )
         else:
             message = build_return_location_request_flex_message(record_before)
-        send_line_reply_messages(reply_token, [message])
+        send_line_reply_messages(reply_token, [message], store_key=target_store)
         return
 
     current_answer = getvalue(record_before, "shurikahikaito", "")
@@ -1523,81 +1657,70 @@ def handle_postback(user_id, reply_token, data):
     current_status = getvalue(record_before, "ドロップダウン", "")
 
     if action == "checkstatus":
-        send_line_reply_messages(reply_token, [build_inquiry_flex_message(record_before, app_id)])
+        send_line_reply_messages(
+            reply_token,
+            [build_inquiry_flex_message(record_before, app_id)],
+            store_key=target_store
+        )
         return
 
     if action == "repair":
         if current_cancel_action or current_answer in ["キャンセル", "修理する"] or is_cancel_status(current_status):
-            send_line_reply(reply_token, already_decided_text(current_answer, current_cancel_action))
+            send_line_reply(reply_token, already_decided_text(current_answer, current_cancel_action), store_key=target_store)
             return
         res = update_repair_answer(record_id, "修理する", app_id)
         if not res.ok:
-            send_line_reply(reply_token, "回答の登録に失敗しました。お手数ですが店舗までご連絡ください。")
+            send_line_reply(reply_token, "回答の登録に失敗しました。お手数ですが店舗までご連絡ください。", store_key=target_store)
             return
         record_after = get_kintone_record(record_id, app_id)
-        send_line_reply_messages(reply_token, [build_repair_accept_flex_message(record_after)])
+        send_line_reply_messages(reply_token, [build_repair_accept_flex_message(record_after)], store_key=target_store)
         return
 
     if action == "cancel":
         if current_cancel_action or current_answer == "修理する" or is_ordered_status(current_status) or is_done_status(current_status) or is_complete_status(current_status):
-            send_line_reply(reply_token, already_decided_text(current_answer, current_cancel_action))
+            send_line_reply(reply_token, already_decided_text(current_answer, current_cancel_action), store_key=target_store)
             return
         if current_answer == "キャンセル":
-            send_line_reply_messages(reply_token, [build_cancel_action_flex_message(record_before, app_id)])
+            send_line_reply_messages(reply_token, [build_cancel_action_flex_message(record_before, app_id)], store_key=target_store)
             return
         res = update_repair_answer(record_id, "キャンセル", app_id)
         if not res.ok:
-            send_line_reply(reply_token, "キャンセル回答の登録に失敗しました。お手数ですが店舗までご連絡ください。")
+            send_line_reply(reply_token, "キャンセル回答の登録に失敗しました。お手数ですが店舗までご連絡ください。", store_key=target_store)
             return
         record_after = get_kintone_record(record_id, app_id)
-        send_line_reply_messages(reply_token, [build_cancel_action_flex_message(record_after, app_id)])
+        send_line_reply_messages(reply_token, [build_cancel_action_flex_message(record_after, app_id)], store_key=target_store)
         return
 
     if action in ["cancel_store", "cancel_return", "cancel_dispose"]:
         if current_answer == "修理する":
-            send_line_reply(reply_token, "この修理受付は、すでに「修理する」で受付済みです。\n変更が必要な場合は店舗までご連絡ください。")
+            send_line_reply(reply_token, "この修理受付は、すでに「修理する」で受付済みです。\n変更が必要な場合は店舗までご連絡ください。", store_key=target_store)
             return
         if current_cancel_action:
-            send_line_reply(reply_token, f"この修理受付は、すでに「{current_cancel_action}」で登録済みです。\n変更が必要な場合は店舗までご連絡ください。")
+            send_line_reply(reply_token, f"この修理受付は、すでに「{current_cancel_action}」で登録済みです。\n変更が必要な場合は店舗までご連絡ください。", store_key=target_store)
             return
         if current_answer != "キャンセル":
-            send_line_reply(reply_token, "先に「キャンセルする」を選択してください。\n変更が必要な場合は店舗までご連絡ください。")
+            send_line_reply(reply_token, "先に「キャンセルする」を選択してください。\n変更が必要な場合は店舗までご連絡ください。", store_key=target_store)
             return
         selected_action = "店舗引取" if action == "cancel_store" else "返送" if action == "cancel_return" else "処分"
         res = update_cancel_action(record_id, selected_action, app_id)
         if not res.ok:
-            send_line_reply(reply_token, "登録に失敗しました。")
+            send_line_reply(reply_token, "登録に失敗しました。", store_key=target_store)
             return
         record_after = get_kintone_record(record_id, app_id)
-        send_line_reply_messages(reply_token, [build_cancel_done_flex_message(record_after, selected_action)])
+        send_line_reply_messages(reply_token, [build_cancel_done_flex_message(record_after, selected_action)], store_key=target_store)
         return
 
-    send_line_reply(reply_token, "未対応の操作です。")
+    send_line_reply(reply_token, "未対応の操作です。", store_key=target_store)
 
 
 # =========================================================
 # デモ機貸出 共通処理（共通マスター:36 / 岡山:35 / 広島:47 / EC:50）
 # =========================================================
 def normalize_demo_store(store):
-    normalized_store = str(store or "").strip().lower()
-
-    aliases = {
-        "okayama": "okayama",
-        "岡山": "okayama",
-        "岡山上中野店": "okayama",
-        "hiroshima": "hiroshima",
-        "広島": "hiroshima",
-        "広島本店": "hiroshima",
-        "ec": "ec",
-        "通販": "ec",
-        "ネット": "ec",
-        "クニプロネットショップ": "ec",
-    }
-
-    if normalized_store not in aliases:
+    key = normalize_store_key(store)
+    if key not in DEMO_STORE_CONFIG:
         raise ValueError("店舗を選択してください。")
-
-    return aliases[normalized_store]
+    return key
 
 
 def get_demo_store_config_by_rental_app_id(app_id):
@@ -2215,7 +2338,7 @@ def demo_admin_notify():
             )
 
         card = build_demo_admin_notification_card(record)
-        line_response = send_line_push_messages(line_user_id, [card])
+        line_response = send_line_push_messages(line_user_id, [card], store_key=store_key)
         if not line_response.ok:
             return (
                 json.dumps(
@@ -2500,6 +2623,7 @@ def demo_submit():
                 line_user_id,
                 except_app_id=config["rental_app_id"],
                 except_record_id=rental_record_id,
+                store_key=store_key
             )
 
         reservation_card = build_demo_reservation_card(
@@ -2523,6 +2647,7 @@ def demo_submit():
         line_response = send_line_push_messages(
             line_user_id,
             push_messages,
+            store_key=store_key
         )
         if not line_response.ok:
             print(
