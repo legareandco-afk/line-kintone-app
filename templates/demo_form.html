@@ -339,7 +339,7 @@
         }
 
         .hidden {
-            display: none;
+            display: none !important;
         }
 
         @media (min-width: 720px) {
@@ -360,24 +360,25 @@
 
         <form id="demoRentalForm">
             <div class="card">
-                <h2 class="section-title">1. 受付店舗</h2>
+                <h2 class="section-title">1. 受付店舗・窓口</h2>
                 <label for="store">
-                    店舗 <span class="required">必須</span>
+                    店舗・窓口 <span class="required">必須</span>
                 </label>
                 <select id="store" name="store" required>
                     <option value="">選択してください</option>
-                    <option value="okayama">岡山</option>
-                    <option value="hiroshima">広島</option>
+                    <option value="okayama">岡山上中野店</option>
+                    <option value="hiroshima">広島本店</option>
+                    <option value="ec">EC（クニプロネットショップ）</option>
                 </select>
-                <p class="hint">
-                    店舗を選ぶと、現在貸出可能なデモ機が表示されます。
+                <p class="hint" id="storeHint">
+                    店舗・窓口を選ぶと、現在貸出可能なデモ機が表示されます。
                 </p>
             </div>
 
             <div class="card">
                 <h2 class="section-title">2. デモ機選択</h2>
                 <div id="machineStatus">
-                    先に受付店舗を選択してください。
+                    先に受付店舗・窓口を選択してください。
                 </div>
                 <div id="machineList" class="machine-list"></div>
             </div>
@@ -454,12 +455,12 @@
                     name="deliverySubMethod"
                     value=""
                 >
-                <div class="method-grid">
-                    <div class="method-card active" data-delivery-method="🏬店頭受取">
+                <div class="method-grid" id="deliveryMethodGrid">
+                    <div class="method-card active" id="storePickupMethodCard" data-delivery-method="🏬店頭受取">
                         <strong>🏬 店頭受取</strong>
                         <span>店舗へご来店いただき、デモ機をお受け取りいただきます</span>
                     </div>
-                    <div class="method-card" data-delivery-method="🚚郵送">
+                    <div class="method-card" id="shippingMethodCard" data-delivery-method="🚚郵送">
                         <strong>🚚 郵送・配達</strong>
                         <span>ご指定の場所へ発送・お届けします</span>
                     </div>
@@ -572,6 +573,7 @@
         let selectedDemoNo = "";
 
         const storeSelect = document.getElementById("store");
+        const storeHint = document.getElementById("storeHint");
         const machineStatus = document.getElementById("machineStatus");
         const machineList = document.getElementById("machineList");
         const submitButton = document.getElementById("submitBtn");
@@ -580,14 +582,54 @@
         const returnDateInput = document.getElementById("returnScheduledDate");
         const deliveryMethodInput = document.getElementById("deliveryMethod");
         const deliverySubMethodInput = document.getElementById("deliverySubMethod");
+        const deliveryMethodGrid = document.getElementById("deliveryMethodGrid");
+        const storePickupMethodCard = document.getElementById("storePickupMethodCard");
+        const shippingMethodCard = document.getElementById("shippingMethodCard");
         const deliverySubBox = document.getElementById("deliverySubBox");
         const deliveryAddressBox = document.getElementById("deliveryAddressBox");
         const deliveryLocationGuideBox = document.getElementById("deliveryLocationGuideBox");
         const shukajushoInput = document.getElementById("shukajusho");
         const zipcodeInput = document.getElementById("zipcode");
 
-        window.addEventListener("load", initializeLiff);
-        storeSelect.addEventListener("change", loadDemoMachines);
+        function resolveStoreFromQuery() {
+            const params = new URLSearchParams(window.location.search);
+            const raw = (params.get("store") || params.get("app") || "").trim().toLowerCase();
+            if (raw === "hiroshima" || raw === "47" || raw === "46" || raw === "広島") return "hiroshima";
+            if (raw === "ec" || raw === "50" || raw === "49" || raw === "通販" || raw === "ネット") return "ec";
+            if (raw === "okayama" || raw === "35" || raw === "37" || raw === "岡山") return "okayama";
+            return "";
+        }
+
+        function applyStoreDeliveryBehavior(storeVal) {
+            if (storeVal === "ec") {
+                storeHint.textContent = "EC（クニプロネットショップ）の貸出可能デモ機を表示します（郵送・配達にて承ります）。";
+                storePickupMethodCard.classList.add("hidden");
+                deliveryMethodGrid.style.gridTemplateColumns = "1fr";
+                if (deliveryMethodInput.value !== "🚚郵送") {
+                    shippingMethodCard.click();
+                }
+            } else {
+                storeHint.textContent = "店舗・窓口を選ぶと、現在貸出可能なデモ機が表示されます。";
+                storePickupMethodCard.classList.remove("hidden");
+                deliveryMethodGrid.style.gridTemplateColumns = "";
+            }
+        }
+
+        window.addEventListener("load", function () {
+            const initialStore = resolveStoreFromQuery();
+            if (initialStore) {
+                storeSelect.value = initialStore;
+                applyStoreDeliveryBehavior(initialStore);
+                loadDemoMachines();
+            }
+            initializeLiff();
+        });
+
+        storeSelect.addEventListener("change", function () {
+            applyStoreDeliveryBehavior(this.value);
+            loadDemoMachines();
+        });
+
         rentalDateInput.addEventListener("change", updateReturnDateMinimum);
         document
             .getElementById("zipSearchBtn")
@@ -780,7 +822,7 @@
             updateSubmitButtonState();
 
             if (!store) {
-                machineStatus.textContent = "先に受付店舗を選択してください。";
+                machineStatus.textContent = "先に受付店舗・窓口を選択してください。";
                 return;
             }
 
@@ -814,7 +856,7 @@
 
             if (machines.length === 0) {
                 machineStatus.textContent =
-                    "現在、この店舗で貸出可能なデモ機はありません。";
+                    "現在、この店舗・窓口で貸出可能なデモ機はありません。";
                 return;
             }
 
