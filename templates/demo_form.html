@@ -84,6 +84,12 @@
             border-radius: 10px;
         }
 
+        select:disabled {
+            background: #f1f5f9;
+            color: #334155;
+            font-weight: 700;
+        }
+
         textarea {
             min-height: 90px;
             resize: vertical;
@@ -567,10 +573,17 @@
     <script>
         "use strict";
 
-        const liffId = "2009322369-U2eRznAs";
+        // 3プロバイダー別 デモ機貸出LIFF ID
+        const DEMO_LIFF_IDS = {
+            okayama: "2009647340-RdrmY90p",
+            hiroshima: "2012735888-Y8hBOH3R",
+            ec: "2012735882-sc6Oj717"
+        };
+
         let lineUserId = "";
         let isSubmitting = false;
         let selectedDemoNo = "";
+        let lockedStore = "";
 
         const storeSelect = document.getElementById("store");
         const storeHint = document.getElementById("storeHint");
@@ -591,16 +604,26 @@
         const shukajushoInput = document.getElementById("shukajusho");
         const zipcodeInput = document.getElementById("zipcode");
 
-        function resolveStoreFromQuery() {
+        function resolveStoreFromUrl() {
             const params = new URLSearchParams(window.location.search);
             const raw = (params.get("store") || params.get("app") || "").trim().toLowerCase();
             if (raw === "hiroshima" || raw === "47" || raw === "46" || raw === "広島") return "hiroshima";
             if (raw === "ec" || raw === "50" || raw === "49" || raw === "通販" || raw === "ネット") return "ec";
             if (raw === "okayama" || raw === "35" || raw === "37" || raw === "岡山") return "okayama";
+
+            const liffState = decodeURIComponent(params.get("liff.state") || "").toLowerCase();
+            if (liffState.includes("hiroshima") || liffState.includes("47")) return "hiroshima";
+            if (liffState.includes("ec") || liffState.includes("50")) return "ec";
+            if (liffState.includes("okayama") || liffState.includes("35")) return "okayama";
+
             return "";
         }
 
-        function applyStoreDeliveryBehavior(storeVal) {
+        function applyStoreDeliveryBehavior(storeVal, shouldLock) {
+            if (shouldLock && storeVal) {
+                storeSelect.disabled = true;
+            }
+
             if (storeVal === "ec") {
                 storeHint.textContent = "EC（クニプロネットショップ）の貸出可能デモ機を表示します（郵送・配達にて承ります）。";
                 storePickupMethodCard.classList.add("hidden");
@@ -609,24 +632,28 @@
                     shippingMethodCard.click();
                 }
             } else {
-                storeHint.textContent = "店舗・窓口を選ぶと、現在貸出可能なデモ機が表示されます。";
+                storeHint.textContent = shouldLock
+                    ? "公式LINEアカウントに紐づく店舗が自動選択されています。"
+                    : "店舗・窓口を選ぶと、現在貸出可能なデモ機が表示されます。";
                 storePickupMethodCard.classList.remove("hidden");
                 deliveryMethodGrid.style.gridTemplateColumns = "";
             }
         }
 
         window.addEventListener("load", function () {
-            const initialStore = resolveStoreFromQuery();
+            const initialStore = resolveStoreFromUrl();
             if (initialStore) {
+                lockedStore = initialStore;
                 storeSelect.value = initialStore;
-                applyStoreDeliveryBehavior(initialStore);
+                applyStoreDeliveryBehavior(initialStore, true);
                 loadDemoMachines();
             }
-            initializeLiff();
+            const activeLiffId = DEMO_LIFF_IDS[initialStore] || DEMO_LIFF_IDS.okayama;
+            initializeLiff(activeLiffId);
         });
 
         storeSelect.addEventListener("change", function () {
-            applyStoreDeliveryBehavior(this.value);
+            applyStoreDeliveryBehavior(this.value, false);
             loadDemoMachines();
         });
 
@@ -768,12 +795,12 @@
             }
         }
 
-        async function initializeLiff() {
+        async function initializeLiff(activeLiffId) {
             const liffStatus = document.getElementById("liffStatus");
 
             try {
                 await liff.init({
-                    liffId: liffId,
+                    liffId: activeLiffId,
                     withLoginOnExternalBrowser: true
                 });
 
@@ -815,7 +842,7 @@
         }
 
         async function loadDemoMachines() {
-            const store = storeSelect.value;
+            const store = lockedStore || storeSelect.value;
             selectedDemoNo = "";
             machineList.innerHTML = "";
             messageBox.innerHTML = "";
@@ -1018,7 +1045,7 @@
                 messageBox.innerHTML = "";
 
                 const payload = {
-                    store: storeSelect.value,
+                    store: lockedStore || storeSelect.value,
                     demoNo: selectedDemoNo,
                     lineuserid: lineUserId,
                     name: document.getElementById("name").value.trim(),
