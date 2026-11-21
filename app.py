@@ -20,33 +20,36 @@ def add_cors_headers(response):
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN") or os.environ.get("LINE_TOKEN")
 KINTONE_API_TOKEN = os.environ.get("KINTONE_API_TOKEN")
 KINTONE_HIROSHIMA_API_TOKEN = os.environ.get("KINTONE_HIROSHIMA_API_TOKEN")
+KINTONE_EC_API_TOKEN = os.environ.get("KINTONE_EC_API_TOKEN")
 CUSTOMER_KINTONE_API_TOKEN = os.environ.get("CUSTOMER_KINTONE_API_TOKEN")
 
 KINTONE_BASE = "https://yz1us.cybozu.com"
 KINTONE_APP_ID = 37
-KINTONE_HIROSHIMA_APP_ID = 39
+KINTONE_HIROSHIMA_APP_ID = 46
+KINTONE_EC_APP_ID = 49
 CUSTOMER_KINTONE_APP_ID = 38
 
 
 # =========================================================
-# デモ機貸出設定
+# デモ機貸出設定（共通マスター:36 / 岡山:35 / 広島:47 / EC:50）
 # =========================================================
-OKAYAMA_DEMO_MASTER_APP_ID = 36
+DEMO_MASTER_APP_ID = 36
 OKAYAMA_DEMO_RENTAL_APP_ID = 35
-HIROSHIMA_DEMO_MASTER_APP_ID = 41
-HIROSHIMA_DEMO_RENTAL_APP_ID = 40
+HIROSHIMA_DEMO_RENTAL_APP_ID = 47
+EC_DEMO_RENTAL_APP_ID = 50
 
-OKAYAMA_DEMO_MASTER_API_TOKEN = os.environ.get(
-    "KINTONE_OKAYAMA_DEMO_MASTER_API_TOKEN"
+DEMO_MASTER_API_TOKEN = (
+    os.environ.get("KINTONE_DEMO_MASTER_API_TOKEN")
+    or os.environ.get("KINTONE_OKAYAMA_DEMO_MASTER_API_TOKEN")
 )
 OKAYAMA_DEMO_RENTAL_API_TOKEN = os.environ.get(
     "KINTONE_OKAYAMA_DEMO_RENTAL_API_TOKEN"
 )
-HIROSHIMA_DEMO_MASTER_API_TOKEN = os.environ.get(
-    "KINTONE_HIROSHIMA_DEMO_MASTER_API_TOKEN"
-)
 HIROSHIMA_DEMO_RENTAL_API_TOKEN = os.environ.get(
     "KINTONE_HIROSHIMA_DEMO_RENTAL_API_TOKEN"
+)
+EC_DEMO_RENTAL_API_TOKEN = os.environ.get(
+    "KINTONE_EC_DEMO_RENTAL_API_TOKEN"
 )
 
 DEMO_AVAILABLE_STATUS = "貸出可⭕️"
@@ -56,25 +59,45 @@ DEMO_RESERVATION_STATUS = "⚪予約受付"
 DEMO_STORE_CONFIG = {
     "okayama": {
         "label": "岡山",
-        "master_app_id": OKAYAMA_DEMO_MASTER_APP_ID,
+        "store_aliases": ["岡山", "岡山上中野店", "okayama"],
+        "master_app_id": DEMO_MASTER_APP_ID,
         "rental_app_id": OKAYAMA_DEMO_RENTAL_APP_ID,
-        "master_token": OKAYAMA_DEMO_MASTER_API_TOKEN,
+        "master_token": DEMO_MASTER_API_TOKEN,
         "rental_token": OKAYAMA_DEMO_RENTAL_API_TOKEN,
         "rental_demo_field": "ルックアップ",
     },
     "hiroshima": {
         "label": "広島",
-        "master_app_id": HIROSHIMA_DEMO_MASTER_APP_ID,
+        "store_aliases": ["広島", "広島本店", "hiroshima"],
+        "master_app_id": DEMO_MASTER_APP_ID,
         "rental_app_id": HIROSHIMA_DEMO_RENTAL_APP_ID,
-        "master_token": HIROSHIMA_DEMO_MASTER_API_TOKEN,
+        "master_token": DEMO_MASTER_API_TOKEN,
         "rental_token": HIROSHIMA_DEMO_RENTAL_API_TOKEN,
         "rental_demo_field": "demo_no_lookup",
     },
+    "ec": {
+        "label": "EC",
+        "store_aliases": ["EC", "ec", "通販", "ネット", "クニプロネットショップ"],
+        "master_app_id": DEMO_MASTER_APP_ID,
+        "rental_app_id": EC_DEMO_RENTAL_APP_ID,
+        "master_token": DEMO_MASTER_API_TOKEN,
+        "rental_token": EC_DEMO_RENTAL_API_TOKEN,
+        "rental_demo_field": "ルックアップ",
+    },
 }
+
+REPAIR_APP_IDS = [
+    KINTONE_APP_ID,
+    KINTONE_HIROSHIMA_APP_ID,
+    KINTONE_EC_APP_ID,
+]
+
 SUPPORTED_KINTONE_APPS = {
     KINTONE_APP_ID: KINTONE_API_TOKEN,
     KINTONE_HIROSHIMA_APP_ID: KINTONE_HIROSHIMA_API_TOKEN,
+    KINTONE_EC_APP_ID: KINTONE_EC_API_TOKEN,
 }
+
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://line-kintone-app.onrender.com")
 
 KINTONE_RECORD_URL = f"{KINTONE_BASE}/k/v1/record.json"
@@ -135,11 +158,23 @@ def get_kintone_api_token(app_id):
     return api_token
 
 
+def store_label_from_app_id(app_id):
+    normalized = int(app_id)
+    if normalized == KINTONE_HIROSHIMA_APP_ID:
+        return "広島"
+    if normalized == KINTONE_EC_APP_ID:
+        return "EC"
+    return "岡山"
+
+
 def app_id_from_store(store):
     normalized_store = str(store or "").strip().lower()
 
-    if normalized_store in ["hiroshima", "広島", "広島本店", "18"]:
+    if normalized_store in ["hiroshima", "広島", "広島本店", "18", "46"]:
         return KINTONE_HIROSHIMA_APP_ID
+
+    if normalized_store in ["ec", "通販", "ネット", "クニプロネットショップ", "49"]:
+        return KINTONE_EC_APP_ID
 
     return KINTONE_APP_ID
 
@@ -457,7 +492,9 @@ def upsert_customer_record(lineid, name, phone):
 # 更新処理
 # =========================
 def clear_location_targets(line_user_id, except_app_id=None, except_record_id=None):
-    for target_app_id in [KINTONE_APP_ID, KINTONE_HIROSHIMA_APP_ID]:
+    for target_app_id in REPAIR_APP_IDS:
+        if not SUPPORTED_KINTONE_APPS.get(target_app_id):
+            continue
         records = get_records_by_lineid(
             line_user_id,
             limit=100,
@@ -540,7 +577,9 @@ def find_location_target(line_user_id):
                     "purpose": purpose,
                 })
 
-    for target_app_id in [KINTONE_APP_ID, KINTONE_HIROSHIMA_APP_ID]:
+    for target_app_id in REPAIR_APP_IDS:
+        if not SUPPORTED_KINTONE_APPS.get(target_app_id):
+            continue
         records = get_records_by_lineid(
             line_user_id,
             limit=100,
@@ -1293,7 +1332,9 @@ def webhook():
 
 def handle_repair_inquiry(user_id, reply_token):
     app_records = []
-    for app_id in [KINTONE_APP_ID, KINTONE_HIROSHIMA_APP_ID]:
+    for app_id in REPAIR_APP_IDS:
+        if not SUPPORTED_KINTONE_APPS.get(app_id):
+            continue
         records = get_records_by_lineid(user_id, limit=10, app_id=app_id)
         for record in records:
             app_records.append({"app_id": app_id, "record": record})
@@ -1313,7 +1354,7 @@ def handle_repair_inquiry(user_id, reply_token):
         app_id = item["app_id"]
         record = item["record"]
         rid = record_id_text(record)
-        store_label = "広島" if app_id == KINTONE_HIROSHIMA_APP_ID else "岡山"
+        store_label = store_label_from_app_id(app_id)
         label = f"{store_label} {rid} {getvalue(record, 'maker', '')} {getvalue(record, 'model', '')}".strip() or f"{store_label} 受付番号 {rid}"
         quick_items.append(
             quick_reply_postback(
@@ -1327,7 +1368,9 @@ def handle_repair_inquiry(user_id, reply_token):
 
 def handle_record_number_inquiry(user_id, record_number, reply_token):
     matches = []
-    for app_id in [KINTONE_APP_ID, KINTONE_HIROSHIMA_APP_ID]:
+    for app_id in REPAIR_APP_IDS:
+        if not SUPPORTED_KINTONE_APPS.get(app_id):
+            continue
         record = get_kintone_record(record_number, app_id)
         if record and getvalue(record, "lineid", "") == user_id:
             matches.append({"app_id": app_id, "record": record})
@@ -1347,7 +1390,7 @@ def handle_record_number_inquiry(user_id, record_number, reply_token):
     quick_items = []
     for item in matches:
         app_id = item["app_id"]
-        store_label = "広島" if app_id == KINTONE_HIROSHIMA_APP_ID else "岡山"
+        store_label = store_label_from_app_id(app_id)
         quick_items.append(
             quick_reply_postback(
                 f"{store_label} 受付{record_number}",
@@ -1533,7 +1576,7 @@ def handle_postback(user_id, reply_token, data):
 
 
 # =========================================================
-# デモ機貸出 共通処理
+# デモ機貸出 共通処理（共通マスター:36 / 岡山:35 / 広島:47 / EC:50）
 # =========================================================
 def normalize_demo_store(store):
     normalized_store = str(store or "").strip().lower()
@@ -1545,6 +1588,10 @@ def normalize_demo_store(store):
         "hiroshima": "hiroshima",
         "広島": "hiroshima",
         "広島本店": "hiroshima",
+        "ec": "ec",
+        "通販": "ec",
+        "ネット": "ec",
+        "クニプロネットショップ": "ec",
     }
 
     if normalized_store not in aliases:
@@ -1690,7 +1737,15 @@ def demo_headers(*tokens):
 def get_available_demo_machines(store):
     store_key, config = get_demo_store_config(store)
     safe_status = escape_kintone_query_value(DEMO_AVAILABLE_STATUS)
-    query = f'rental_availability in ("{safe_status}") order by 数値_0 asc'
+    store_values = ", ".join(
+        f'"{escape_kintone_query_value(alias)}"'
+        for alias in config["store_aliases"]
+    )
+    query = (
+        f'rental_availability in ("{safe_status}") '
+        f'and store in ({store_values}) '
+        'order by 数値_0 asc'
+    )
 
     response = requests.get(
         KINTONE_RECORDS_URL,
@@ -1859,7 +1914,7 @@ def build_demo_rental_record(data, config, master_record):
         "remarks": make_field(data.get("remarks", "")),
     }
 
-    if config["rental_app_id"] == OKAYAMA_DEMO_RENTAL_APP_ID:
+    if config["rental_app_id"] in [OKAYAMA_DEMO_RENTAL_APP_ID, EC_DEMO_RENTAL_APP_ID]:
         record["文字列__1行__1"] = make_field(accessory_status)
     else:
         record["文字列__1行__5"] = make_field(config["label"])
