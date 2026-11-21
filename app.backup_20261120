@@ -150,6 +150,7 @@ def kintone_headers(app_id=KINTONE_APP_ID):
         "Content-Type": "application/json"
     }
 
+
 def customer_kintone_headers():
     return {"X-Cybozu-API-Token": CUSTOMER_KINTONE_API_TOKEN, "Content-Type": "application/json"}
 
@@ -294,6 +295,7 @@ def add_kintone_record(record, app_id=KINTONE_APP_ID):
     print("Kintone登録:", normalized_app_id, res.text)
     return res
 
+
 def get_kintone_record(record_id, app_id=KINTONE_APP_ID):
     normalized_app_id = normalize_app_id(app_id)
     res = requests.get(
@@ -307,6 +309,7 @@ def get_kintone_record(record_id, app_id=KINTONE_APP_ID):
     print("単体取得ステータス:", res.status_code)
     print("単体取得本文:", res.text)
     return res.json().get("record") if res.ok else None
+
 
 def get_records_by_lineid(line_user_id, limit=10, app_id=KINTONE_APP_ID):
     normalized_app_id = normalize_app_id(app_id)
@@ -324,6 +327,7 @@ def get_records_by_lineid(line_user_id, limit=10, app_id=KINTONE_APP_ID):
     print("複数取得本文:", res.text)
     return res.json().get("records", []) if res.ok else []
 
+
 def update_kintone_record(record_id, fields, app_id=KINTONE_APP_ID):
     normalized_app_id = normalize_app_id(app_id)
     res = requests.put(
@@ -340,6 +344,38 @@ def update_kintone_record(record_id, fields, app_id=KINTONE_APP_ID):
     )
     print("Kintone更新:", normalized_app_id, res.text)
     return res
+
+
+def get_demo_records_by_lineid(config, line_user_id, limit=100):
+    safe_user_id = escape_kintone_query_value(line_user_id)
+    query = f'ルックアップ_0 = "{safe_user_id}" order by $id desc limit {limit}'
+    res = requests.get(
+        KINTONE_RECORDS_URL,
+        headers={"X-Cybozu-API-Token": config["rental_token"]},
+        params={"app": config["rental_app_id"], "query": query},
+        timeout=20,
+    )
+    print("デモ機貸出検索:", config["label"], res.status_code, res.text)
+    return res.json().get("records", []) if res.ok else []
+
+
+def update_demo_rental_record(config, record_id, fields):
+    res = requests.put(
+        KINTONE_RECORD_URL,
+        headers=demo_headers(config["rental_token"]),
+        data=json.dumps(
+            {
+                "app": config["rental_app_id"],
+                "id": record_id,
+                "record": fields,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+        timeout=20,
+    )
+    print("デモ機貸出更新:", config["label"], res.status_code, res.text)
+    return res
+
 
 def customer_api_enabled():
     if not CUSTOMER_KINTONE_API_TOKEN:
@@ -449,6 +485,28 @@ def clear_location_targets(line_user_id, except_app_id=None, except_record_id=No
                 target_app_id
             )
 
+    for config in DEMO_STORE_CONFIG.values():
+        if not config.get("rental_token"):
+            continue
+        records = get_demo_records_by_lineid(config, line_user_id, limit=100)
+        for record in records:
+            record_id = record_id_text(record)
+            purpose = getvalue(record, "locationpurpose", "")
+            if not purpose:
+                continue
+            if (
+                except_app_id is not None
+                and except_record_id is not None
+                and int(config["rental_app_id"]) == int(except_app_id)
+                and str(record_id) == str(except_record_id)
+            ):
+                continue
+            update_demo_rental_record(
+                config,
+                record_id,
+                {"locationpurpose": make_field("")},
+            )
+
 
 def set_location_target(line_user_id, app_id, record_id, purpose):
     normalized_app_id = normalize_app_id(app_id)
@@ -467,6 +525,21 @@ def set_location_target(line_user_id, app_id, record_id, purpose):
 def find_location_target(line_user_id):
     targets = []
 
+    for config in DEMO_STORE_CONFIG.values():
+        if not config.get("rental_token"):
+            continue
+        records = get_demo_records_by_lineid(config, line_user_id, limit=100)
+        for record in records:
+            purpose = getvalue(record, "locationpurpose", "")
+            if purpose == "配達":
+                targets.append({
+                    "kind": "demo",
+                    "config": config,
+                    "app_id": config["rental_app_id"],
+                    "record": record,
+                    "purpose": purpose,
+                })
+
     for target_app_id in [KINTONE_APP_ID, KINTONE_HIROSHIMA_APP_ID]:
         records = get_records_by_lineid(
             line_user_id,
@@ -478,6 +551,7 @@ def find_location_target(line_user_id):
             purpose = getvalue(record, "locationpurpose", "")
             if purpose in ["集荷", "返却"]:
                 targets.append({
+                    "kind": "repair",
                     "app_id": target_app_id,
                     "record": record,
                     "purpose": purpose
@@ -485,6 +559,17 @@ def find_location_target(line_user_id):
 
     return targets[0] if targets else None
 
+
+def update_demo_location_delivery(config, record_id, address, latitude, longitude):
+    map_url = f"https://www.google.com/maps?q={latitude},{longitude}"
+    fields = {
+        "shukajusho": make_field(address),
+        "ido": make_field(str(latitude)),
+        "keido": make_field(str(longitude)),
+        "mapurl": make_field(map_url),
+        "locationpurpose": make_field(""),
+    }
+    return update_demo_rental_record(config, record_id, fields)
 
 
 def update_location_pickup(
@@ -519,6 +604,7 @@ def update_location_pickup(
             fields["locationpurpose"] = make_field("返却")
     return update_kintone_record(record_id, fields, app_id)
 
+
 def update_location_return(
     record_id,
     address,
@@ -536,11 +622,13 @@ def update_location_return(
         "locationpurpose": make_field("")
     }, app_id)
 
+
 def update_notify_history(record_id, message, app_id=KINTONE_APP_ID):
     return update_kintone_record(record_id, {
         "lastnotify": make_field(now_utc_for_kintone()),
         "notifymessage": make_field(message)
     }, app_id)
+
 
 def update_repair_answer(record_id, answer, app_id=KINTONE_APP_ID):
     fields = {"shurikahikaito": make_field(answer)}
@@ -548,12 +636,14 @@ def update_repair_answer(record_id, answer, app_id=KINTONE_APP_ID):
         fields["ドロップダウン"] = make_field(STATUS_ORDERED)
     return update_kintone_record(record_id, fields, app_id)
 
+
 def update_cancel_action(record_id, action, app_id=KINTONE_APP_ID):
     status = STATUS_CANCEL_DISPOSE if action == "処分" else STATUS_CANCEL_RETURN if action == "返送" else STATUS_CANCEL_STORE
     return update_kintone_record(record_id, {
         "canceltaio": make_field(action),
         "ドロップダウン": make_field(status)
     }, app_id)
+
 
 def already_decided_text(current_answer, current_cancel_action):
     if current_cancel_action:
@@ -918,6 +1008,29 @@ def build_return_location_request_flex_message(record):
     return make_card("📦 返却場所を登録してください", rid, "#6A1B9A", "#F3E5F5", body, alt="返却場所を送信してください", quick=[quick_reply_location("📍 返却場所を送る")])
 
 
+def build_demo_delivery_location_request_flex_message(record_id, name):
+    record = {"$id": {"value": record_id}, "customer_name": {"value": name}}
+    body = [
+        name_line(record),
+        paragraph_box(
+            [
+                "下の「📍 お届け先を送る」ボタンを押してください。",
+                "位置情報画面が開いたら、配達先の場所を選んで緑の✅を押してください。",
+            ],
+            "#F2F8FF",
+        ),
+    ]
+    return make_card(
+        "📍 デモ機のお届け先を登録してください",
+        record_id,
+        "#1976D2",
+        "#E3F2FD",
+        body,
+        alt="デモ機のお届け先を送信してください",
+        quick=[quick_reply_location("📍 お届け先を送る")],
+    )
+
+
 def build_repair_accept_flex_message(record):
     rid = record_id_text(record)
     body = [name_line(record), paragraph_box(["修理進行のご回答ありがとうございます。", "これより修理作業を進めます。"], "#F3FFF7"), info_box("現在の状態", STATUS_ORDERED, "#06C755", "#F3FFF7")]
@@ -1142,6 +1255,7 @@ def notify():
     update_notify_history(record_id, message, app_id)
     return f"送信完了: {status}", 200
 
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     body = request.get_json(force=True)
@@ -1210,6 +1324,7 @@ def handle_repair_inquiry(user_id, reply_token):
         )
     send_line_reply(reply_token, text, quick_items)
 
+
 def handle_record_number_inquiry(user_id, record_number, reply_token):
     matches = []
     for app_id in [KINTONE_APP_ID, KINTONE_HIROSHIMA_APP_ID]:
@@ -1246,6 +1361,7 @@ def handle_record_number_inquiry(user_id, record_number, reply_token):
         quick_items
     )
 
+
 def handle_location_message(user_id, reply_token, message):
     address = message.get("address", "")
     title = message.get("title", "")
@@ -1256,18 +1372,34 @@ def handle_location_message(user_id, reply_token, message):
     if not target:
         send_line_reply(
             reply_token,
-            "位置情報を受信しましたが、登録先の修理受付を確認できませんでした。修理受付後に届いた位置情報ボタンから、もう一度お試しください。"
+            "位置情報を受信しましたが、登録先の受付を確認できませんでした。受付後に届いた位置情報ボタンから、もう一度お試しください。"
         )
         return
-    app_id = target["app_id"]
+
+    kind = target.get("kind", "repair")
     record = target["record"]
     purpose = target["purpose"]
     rid = record_id_text(record)
-    shukajusho = getvalue(record, "shukajusho", "")
-    shukabasho = getvalue(record, "shukabasho", "")
+
+    if kind == "demo" and purpose == "配達":
+        config = target["config"]
+        res = update_demo_location_delivery(
+            config,
+            rid,
+            location_text,
+            latitude,
+            longitude,
+        )
+        send_line_reply(
+            reply_token,
+            "デモ機のお届け先住所を登録しました。\nご協力ありがとうございます。"
+            if res.ok
+            else "お届け先場所の登録に失敗しました。お手数ですが店舗までご連絡ください。",
+        )
+        return
+
+    app_id = target["app_id"]
     henkyakuhouhou = getvalue(record, "henkyakuhouhou", "")
-    henkyakujusho = getvalue(record, "henkyakujusho", "")
-    henkyakubasho = getvalue(record, "henkyakubasho", "")
     sameaddress = getvalue(record, "sameaddress", "")
     if purpose == "集荷":
         res = update_location_pickup(
@@ -1308,6 +1440,7 @@ def handle_location_message(user_id, reply_token, message):
         reply_token,
         "位置情報の登録先を確認できませんでした。お手数ですが、もう一度お試しください。"
     )
+
 
 def handle_postback(user_id, reply_token, data):
     parsed = parse_qs(data)
@@ -1397,7 +1530,6 @@ def handle_postback(user_id, reply_token, data):
         return
 
     send_line_reply(reply_token, "未対応の操作です。")
-
 
 
 # =========================================================
@@ -1689,10 +1821,6 @@ def update_demo_master_availability(
 
 def build_demo_rental_record(data, config, master_record):
     demo_no = getvalue(master_record, "数値_0", "")
-    product_name = getvalue(master_record, "product_name", "")
-    maker = getvalue(master_record, "maker", "")
-    model = getvalue(master_record, "model", "")
-    serial = getvalue(master_record, "serial", "")
     accessory_status = getvalue(
         master_record,
         "accessory_status",
@@ -1702,6 +1830,13 @@ def build_demo_rental_record(data, config, master_record):
     customer_name = str(data.get("name", "")).strip()
     phone = str(data.get("phone", "")).strip()
     company = str(data.get("company", "")).strip()
+    delivery_method = str(data.get("deliveryMethod", "")).strip()
+    delivery_sub_method = str(data.get("deliverySubMethod", "")).strip()
+    shukajusho = str(data.get("shukajusho", "")).strip()
+    is_line_location = (
+        delivery_method == "🚚郵送"
+        and delivery_sub_method == "LINEで位置情報を送る"
+    )
 
     record = {
         config["rental_demo_field"]: {
@@ -1716,7 +1851,9 @@ def build_demo_rental_record(data, config, master_record):
             data.get("rentalScheduledDate", "")
         ),
         "shukakiboubi": make_field(data.get("returnScheduledDate", "")),
-        "delivery_method": make_field(data.get("deliveryMethod", "")),
+        "delivery_method": make_field(delivery_method),
+        "shukajusho": make_field(shukajusho),
+        "locationpurpose": make_field("配達" if is_line_location else ""),
         "ドロップダウン": make_field(DEMO_RESERVATION_STATUS),
         "kiyakuagree": make_field("同意済み"),
         "remarks": make_field(data.get("remarks", "")),
@@ -1771,6 +1908,13 @@ def validate_demo_rental_request(data):
     for label, value in required_values.items():
         if not str(value or "").strip():
             raise ValueError(f"{label}を入力してください。")
+
+    if data.get("deliveryMethod") == "🚚郵送":
+        sub_method = str(data.get("deliverySubMethod", "")).strip()
+        if not sub_method:
+            raise ValueError("お届け先の指定方法を選択してください。")
+        if sub_method == "住所を入力する" and not str(data.get("shukajusho", "")).strip():
+            raise ValueError("お届け先住所を入力してください。")
 
     if data.get("kiyakuagree") != "同意済み":
         raise ValueError("利用規約への同意が必要です。")
@@ -2288,19 +2432,42 @@ def demo_submit():
         rental_record_id = rental_response.json().get("id", "")
         product_name = getvalue(master_record, "product_name", "")
         line_user_id = str(data.get("lineuserid", "")).strip()
-        store_label = config["label"]
+        customer_name = str(data.get("name", "")).strip()
+        delivery_method = str(data.get("deliveryMethod", "")).strip()
+        delivery_sub_method = str(data.get("deliverySubMethod", "")).strip()
+        is_line_location = (
+            delivery_method == "🚚郵送"
+            and delivery_sub_method == "LINEで位置情報を送る"
+        )
+
+        if is_line_location:
+            clear_location_targets(
+                line_user_id,
+                except_app_id=config["rental_app_id"],
+                except_record_id=rental_record_id,
+            )
+
         reservation_card = build_demo_reservation_card(
             rental_record_id,
-            str(data.get("name", "")).strip(),
+            customer_name,
             product_name,
             format_demo_received_datetime(),
             data.get("rentalScheduledDate", ""),
             data.get("returnScheduledDate", ""),
-            data.get("deliveryMethod", ""),
+            delivery_method,
         )
+        push_messages = [reservation_card]
+        if is_line_location:
+            push_messages.append(
+                build_demo_delivery_location_request_flex_message(
+                    rental_record_id,
+                    customer_name,
+                )
+            )
+
         line_response = send_line_push_messages(
             line_user_id,
-            [reservation_card],
+            push_messages,
         )
         if not line_response.ok:
             print(
@@ -2316,6 +2483,7 @@ def demo_submit():
                     "recordId": rental_record_id,
                     "store": store_key,
                     "productName": product_name,
+                    "isLineLocation": is_line_location,
                 },
                 ensure_ascii=False,
             ),
