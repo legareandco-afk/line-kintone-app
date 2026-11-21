@@ -74,7 +74,7 @@ DEMO_RESERVATION_STATUS = "⚪予約受付"
 DEMO_STORE_CONFIG = {
     "okayama": {
         "label": "岡山",
-        "store_aliases": ["岡山", "岡山上中野店", "okayama"],
+        "store_aliases": ["岡山"],
         "master_app_id": DEMO_MASTER_APP_ID,
         "rental_app_id": OKAYAMA_DEMO_RENTAL_APP_ID,
         "master_token": DEMO_MASTER_API_TOKEN,
@@ -83,7 +83,7 @@ DEMO_STORE_CONFIG = {
     },
     "hiroshima": {
         "label": "広島",
-        "store_aliases": ["広島", "広島本店", "hiroshima"],
+        "store_aliases": ["広島"],
         "master_app_id": DEMO_MASTER_APP_ID,
         "rental_app_id": HIROSHIMA_DEMO_RENTAL_APP_ID,
         "master_token": DEMO_MASTER_API_TOKEN,
@@ -92,7 +92,7 @@ DEMO_STORE_CONFIG = {
     },
     "ec": {
         "label": "EC",
-        "store_aliases": ["EC", "ec", "通販", "ネット", "クニプロネットショップ"],
+        "store_aliases": ["EC"],
         "master_app_id": DEMO_MASTER_APP_ID,
         "rental_app_id": EC_DEMO_RENTAL_APP_ID,
         "master_token": DEMO_MASTER_API_TOKEN,
@@ -113,7 +113,7 @@ SUPPORTED_KINTONE_APPS = {
     KINTONE_EC_APP_ID: KINTONE_EC_API_TOKEN,
 }
 
-PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://line-kintone-app.onrender.com")
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://line-kintone-app-5wru.onrender.com")
 
 KINTONE_RECORD_URL = f"{KINTONE_BASE}/k/v1/record.json"
 KINTONE_RECORDS_URL = f"{KINTONE_BASE}/k/v1/records.json"
