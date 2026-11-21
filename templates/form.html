@@ -22,7 +22,7 @@
     input,select,textarea { width:100%; padding:12px; border:1px solid var(--border); border-radius:10px; font-size:16px; background:white; }
     textarea { min-height:92px; resize:vertical; }
     .hint { font-size:13px; color:var(--muted); margin:5px 0 0; line-height:1.5; }
-    .hidden { display:none; }
+    .hidden { display:none !important; }
     .checkbox-group { display:grid; gap:8px; margin-top:8px; }
     .check-item { border:1px solid var(--border); border-radius:10px; padding:11px 12px; display:flex; align-items:center; gap:9px; background:#fff; }
     .check-item input { width:auto; margin:0; transform:scale(1.1); }
@@ -68,14 +68,15 @@
 
     <form id="repairForm">
       <div class="card">
-        <h2 class="section-title">受付店舗</h2>
-        <label>修理を依頼する店舗 <span class="required">必須</span></label>
+        <h2 class="section-title">受付店舗・窓口</h2>
+        <label>修理を依頼する店舗・窓口 <span class="required">必須</span></label>
         <select id="store" name="store" required>
           <option value="">選択してください</option>
           <option value="okayama">岡山上中野店</option>
           <option value="hiroshima">広島本店</option>
+          <option value="ec">EC（クニプロネットショップ）</option>
         </select>
-        <p class="hint">選択した店舗の修理進捗管理表へ登録されます。</p>
+        <p class="hint" id="storeHint">選択した店舗・窓口の修理進捗管理表へ登録されます。</p>
       </div>
 
       <div class="card">
@@ -137,12 +138,12 @@
         <input type="hidden" id="uketorihouhou" name="uketorihouhou" required>
         <input type="hidden" id="mainMethod" name="mainMethod">
         <input type="hidden" id="pickupMethod" name="pickupMethod">
-        <div class="method-grid">
-          <div class="method-card" data-main-method="店舗持ち込み">
+        <div class="method-grid" id="mainMethodGrid">
+          <div class="method-card" id="storeBringCard" data-main-method="店舗持ち込み">
             <strong>店舗持ち込み</strong>
             <span>修理品を店舗へお持ち込みいただきます</span>
           </div>
-          <div class="method-card" data-main-method="集荷依頼">
+          <div class="method-card" id="pickupCard" data-main-method="集荷依頼">
             <strong>集荷依頼</strong>
             <span>ご指定の場所へ集荷に伺います</span>
           </div>
@@ -267,6 +268,40 @@
     const liffId = "2009322369-Om7WRQAU";
     const storeInfoHtml = `<div class="store-box"><strong>国本刃物 上中野店</strong><br>〒700-0972<br>岡山県岡山市北区上中野2丁目27-12<br>電話番号：086-230-6551</div>`;
     const hiroshimaStoreInfoHtml = `<div class="store-box"><strong>広島本店</strong><br>店舗の所在地・電話番号はLINEの店舗案内をご確認ください。</div>`;
+    const ecStoreInfoHtml = `<div class="store-box"><strong>EC（クニプロネットショップ）修理窓口</strong><br>フリーダイヤル：0120-067-076<br>集荷・配送にて修理品を承ります。</div>`;
+
+    function resolveStoreFromQuery() {
+      const params = new URLSearchParams(window.location.search);
+      const raw = (params.get("store") || params.get("app") || "").trim().toLowerCase();
+      if (raw === "hiroshima" || raw === "46" || raw === "広島") return "hiroshima";
+      if (raw === "ec" || raw === "49" || raw === "通販" || raw === "ネット") return "ec";
+      if (raw === "okayama" || raw === "37" || raw === "岡山") return "okayama";
+      return "";
+    }
+
+    function applyStoreBehavior(storeVal) {
+      const storeBringCard = document.getElementById("storeBringCard");
+      const pickupCard = document.getElementById("pickupCard");
+      const mainMethodGrid = document.getElementById("mainMethodGrid");
+      const storeHint = document.getElementById("storeHint");
+
+      if (storeVal === "ec") {
+        storeHint.textContent = "EC（クニプロネットショップ）修理窓口へ登録されます。集荷依頼にて承ります。";
+        storeBringCard.classList.add("hidden");
+        mainMethodGrid.style.gridTemplateColumns = "1fr";
+        if (document.getElementById("mainMethod").value !== "集荷依頼") {
+          pickupCard.click();
+        }
+      } else {
+        storeHint.textContent = "選択した店舗の修理進捗管理表へ登録されます。";
+        storeBringCard.classList.remove("hidden");
+        mainMethodGrid.style.gridTemplateColumns = "";
+      }
+    }
+
+    document.getElementById("store").addEventListener("change", function () {
+      applyStoreBehavior(this.value);
+    });
 
     async function autofillCustomerProfile(currentUserId) {
       if (!currentUserId) return;
@@ -290,6 +325,13 @@
     }
 
     window.onload = async function () {
+      const initialStore = resolveStoreFromQuery();
+      if (initialStore) {
+        const storeSelect = document.getElementById("store");
+        storeSelect.value = initialStore;
+        applyStoreBehavior(initialStore);
+      }
+
       const submitBtn = document.getElementById("submitBtn");
       const liffStatus = document.getElementById("liffStatus");
       try {
@@ -628,9 +670,9 @@
           const selectedStoreInfoHtml = store === "hiroshima" ? hiroshimaStoreInfoHtml : storeInfoHtml;
           successText = `<div class="success-box"><strong>✅ 修理受付を完了しました。</strong><br><br>修理品は下記店舗までお持ち込みください。${selectedStoreInfoHtml}</div>`;
         } else if (method === "集荷依頼・LINEで位置情報を送る") {
-          successText = `<div class="success-box"><strong>✅ 修理受付を完了しました。</strong><br><br>LINEトークに届いた<strong>「📍 集荷場所を送る」ボタン</strong>を押してください。<br><br>ボタンを押したあと、場所を選んで緑の✅を押してください。</div>`;
+          successText = `<div class="success-box"><strong>✅ 修理受付を完了しました。</strong><br><br>LINEトークに届いた<strong>「📍 集荷場所を送る」ボタン</strong>を押してください。<br><br>ボタンを押したあと、場所を選んで緑の✅を押してください。${store === "ec" ? ecStoreInfoHtml : ""}</div>`;
         } else if (method === "集荷依頼・住所を入力する") {
-          successText = `<div class="success-box"><strong>✅ 修理受付を完了しました。</strong><br><br>入力いただいた住所をもとに集荷手配を進めます。<br>集荷希望日・時間については、確認後にご連絡する場合があります。</div>`;
+          successText = `<div class="success-box"><strong>✅ 修理受付を完了しました。</strong><br><br>入力いただいた住所をもとに集荷手配を進めます。<br>集荷希望日・時間については、確認後にご連絡する場合があります。${store === "ec" ? ecStoreInfoHtml : ""}</div>`;
         } else {
           successText = `<div class="success-box"><strong>✅ 修理受付を完了しました。</strong></div>`;
         }
@@ -651,6 +693,15 @@
         document.getElementById("mainMethod").value = "";
         document.getElementById("pickupMethod").value = "";
         resetReturnFields();
+
+        const resetStore = resolveStoreFromQuery();
+        if (resetStore) {
+          document.getElementById("store").value = resetStore;
+          applyStoreBehavior(resetStore);
+        } else {
+          applyStoreBehavior("");
+        }
+
         submitBtn.disabled = true;
         submitBtn.textContent = "送信済み";
         window.scrollTo({ top: document.body.scrollHeight, behavior:"smooth" });
