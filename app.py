@@ -88,7 +88,7 @@ DEMO_STORE_CONFIG = {
         "rental_app_id": HIROSHIMA_DEMO_RENTAL_APP_ID,
         "master_token": DEMO_MASTER_API_TOKEN,
         "rental_token": HIROSHIMA_DEMO_RENTAL_API_TOKEN,
-        "rental_demo_field": "demo_no_lookup",
+        "rental_demo_field": "ルックアップ",
     },
     "ec": {
         "label": "EC",
@@ -2035,12 +2035,8 @@ def build_demo_rental_record(data, config, master_record):
         "ドロップダウン": make_field(DEMO_RESERVATION_STATUS),
         "kiyakuagree": make_field("同意済み"),
         "remarks": make_field(data.get("remarks", "")),
+        "文字列__1行__1": make_field(accessory_status),
     }
-
-    if config["rental_app_id"] in [OKAYAMA_DEMO_RENTAL_APP_ID, EC_DEMO_RENTAL_APP_ID]:
-        record["文字列__1行__1"] = make_field(accessory_status)
-    else:
-        record["文字列__1行__5"] = make_field(config["label"])
 
     return record
 
@@ -2115,11 +2111,7 @@ def validate_demo_rental_request(data):
 def build_demo_admin_notification_key(record):
     status = getvalue(record, "ドロップダウン", "")
     record_id = record_id_text(record)
-    demo_no = getvalue(record, "ルックアップ", "") or getvalue(
-        record,
-        "demo_no_lookup",
-        "",
-    )
+    demo_no = getvalue(record, "ルックアップ", "")
     return f"{status}|受付番号{record_id}|デモ機No{demo_no}"
 
 
